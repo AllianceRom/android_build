@@ -17,12 +17,13 @@
 # that should not be in PDK should be added in lower level like core.mk.
 
 PRODUCT_PROPERTY_OVERRIDES := \
-    ro.config.notification_sound=Chime.ogg \
-    ro.config.alarm_alert=Flow.ogg
+    ro.config.notification_sound=OnTheHunt.ogg \
+    ro.config.alarm_alert=Alarm_Classic.ogg
 
 PRODUCT_PACKAGES += \
     ContactsProvider \
     DefaultContainerService \
+    Home \
     TelephonyProvider \
     UserDictionaryProvider \
     atrace \
@@ -55,6 +56,7 @@ PRODUCT_PACKAGES += \
     libstagefright_soft_vorbisdec \
     libstagefright_soft_vpxdec \
     libstagefright_soft_vpxenc \
+    libstagefright_soft_dtsdec \
     libvariablespeed \
     libwebrtc_audio_preprocessing \
     mdnsd \

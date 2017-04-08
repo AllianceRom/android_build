@@ -117,18 +117,19 @@ TARGET_GLOBAL_LDFLAGS += \
 			-Wl,--fix-cortex-a53-843419 \
 			-fuse-ld=gold \
 			-Wl,--icf=safe \
-			-Wl,--no-undefined-version \
 			$(arch_variant_ldflags)
 
 # Disable transitive dependency library symbol resolving.
 TARGET_GLOBAL_LDFLAGS += -Wl,--allow-shlib-undefined
 
 TARGET_GLOBAL_CPPFLAGS += -fvisibility-inlines-hidden
+TARGET_OPTIMIZATION_LEVEL ?= 2
 
 # More flags/options can be added here
 TARGET_RELEASE_CFLAGS := \
 			-DNDEBUG \
-			-O2 -g \
+			-O$(TARGET_OPTIMIZATION_LEVEL) \
+			-g \
 			-Wstrict-aliasing=2 \
 			-fgcse-after-reload \
 			-frerun-cse-after-loop \

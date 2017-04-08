@@ -246,6 +246,10 @@ def ProcessTargetFiles(input_tf_zip, output_tf_zip, misc_info,
       print "rewriting %s with new keys." % (info.filename,)
       new_data = ReplaceCerts(data)
       common.ZipWriteStr(output_tf_zip, out_info, new_data)
+    elif info.filename.startswith("SYSTEM/etc/permissions/"):
+      print("rewriting %s with new keys." % info.filename)
+      new_data = ReplaceCerts(data)
+      common.ZipWriteStr(output_tf_zip, out_info, new_data)
 
     # Trigger a rebuild of the recovery patch if needed.
     elif info.filename in ("SYSTEM/recovery-from-boot.p",
@@ -415,7 +419,7 @@ def RewriteProps(data, misc_info):
         value = "/".join(pieces)
       elif key == "ro.build.description":
         pieces = value.split(" ")
-        assert len(pieces) == 5
+        #assert len(pieces) == 5
         pieces[-1] = EditTags(pieces[-1])
         value = " ".join(pieces)
       elif key == "ro.build.tags":
@@ -472,11 +476,11 @@ def ReplaceOtaKeys(input_tf_zip, output_tf_zip, misc_info):
   # recovery uses a version of the key that has been slightly
   # predigested (by DumpPublicKey.java) and put in res/keys.
   # extra_recovery_keys are used only in recovery.
-
-  p = common.Run(["java", "-jar",
-                  os.path.join(OPTIONS.search_path, "framework", "dumpkey.jar")]
-                 + mapped_keys + extra_recovery_keys,
-                 stdout=subprocess.PIPE)
+  cmd = ([OPTIONS.java_path] + OPTIONS.java_args +
+         ["-jar",
+          os.path.join(OPTIONS.search_path, "framework", "dumpkey.jar")] +
+         mapped_keys + extra_recovery_keys)
+  p = common.Run(cmd, stdout=subprocess.PIPE)
   new_recovery_keys, _ = p.communicate()
   if p.returncode != 0:
     raise common.ExternalError("failed to run dumpkeys")
@@ -713,7 +717,9 @@ def main(argv):
   common.ZipClose(input_zip)
   common.ZipClose(output_zip)
 
-  add_img_to_target_files.AddImagesToTargetFiles(args[1])
+  # Skip building userdata.img and cache.img when signing the target files.
+  new_args = ["--is_signing", args[1]]
+  add_img_to_target_files.main(new_args)
 
   print "done."
 
@@ -726,3 +732,5 @@ if __name__ == '__main__':
     print "   ERROR: %s" % (e,)
     print
     sys.exit(1)
+  finally:
+    common.Cleanup()

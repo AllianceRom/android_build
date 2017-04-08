@@ -44,7 +44,6 @@ $(warning *  You are using version $(MAKE_VERSION) of make.)
 $(warning *  Android can only be built by versions 3.81 and higher.)
 $(warning *  see https://source.android.com/source/download.html)
 $(warning ********************************************************************************)
-$(error stopping)
 endif
 
 # Absolute path of the present working direcotry.
@@ -60,6 +59,7 @@ BUILD_SYSTEM := $(TOPDIR)build/core
 # Ensure JAVA_NOT_REQUIRED is not set externally.
 JAVA_NOT_REQUIRED := false
 
+ifneq ($(USE_GPU_FOR_BUILDS),true)
 # This is the default target.  It must be the first declared target.
 .PHONY: droid
 DEFAULT_GOAL := droid
@@ -123,8 +123,8 @@ endif
 $(shell mkdir -p $(OUT_DIR) && \
     echo -n $(BUILD_NUMBER) > $(OUT_DIR)/build_number.txt && \
     echo -n $(BUILD_DATETIME) > $(OUT_DIR)/build_date.txt)
-BUILD_NUMBER_FROM_FILE := $$(cat $(OUT_DIR)/build_number.txt)
-BUILD_DATETIME_FROM_FILE := $$(cat $(OUT_DIR)/build_date.txt)
+BUILD_NUMBER_FROM_FILE := $(shell cat $(OUT_DIR)/build_number.txt)
+BUILD_DATETIME_FROM_FILE := $(shell cat $(OUT_DIR)/build_date.txt)
 ifeq ($(HOST_OS),darwin)
 DATE_FROM_FILE := date -r $(BUILD_DATETIME_FROM_FILE)
 else
@@ -211,36 +211,6 @@ $(info Continue at your own peril!)
 $(info ************************************************************)
 endif
 
-# Check for the current JDK.
-#
-# For Java 1.7/1.8, we require OpenJDK on linux and Oracle JDK on Mac OS.
-requires_openjdk := false
-ifeq ($(BUILD_OS),linux)
-requires_openjdk := true
-endif
-
-
-# Check for the current jdk
-ifeq ($(requires_openjdk), true)
-# The user asked for openjdk, so check that the host
-# java version is really openjdk and not some other JDK.
-ifeq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
-$(info ************************************************************)
-$(info You asked for an OpenJDK based build but your version is)
-$(info $(java_version_str).)
-$(info ************************************************************)
-endif # java version is not OpenJdk
-else # if requires_openjdk
-ifneq ($(shell echo '$(java_version_str)' | grep -i openjdk),)
-$(info ************************************************************)
-$(info You are attempting to build with an unsupported JDK.)
-$(info $(space))
-$(info You use OpenJDK but only Sun/Oracle JDK is supported.)
-$(info Please follow the machine setup instructions at)
-$(info $(space)$(space)$(space)$(space)https://source.android.com/source/download.html)
-$(info ************************************************************)
-endif # java version is not Sun Oracle JDK
-endif # if requires_openjdk
 
 KNOWN_INCOMPATIBLE_JAVAC_VERSIONS := google
 incompat_javac := $(foreach v,$(KNOWN_INCOMPATIBLE_JAVAC_VERSIONS),$(findstring $(v),$(javac_version_str)))
@@ -292,6 +262,9 @@ endif
 
 # Bring in standard build system definitions.
 include $(BUILD_SYSTEM)/definitions.mk
+
+# Bring in Qualcomm helper macros
+include $(BUILD_SYSTEM)/qcom_utils.mk
 
 # Bring in dex_preopt.mk
 include $(BUILD_SYSTEM)/dex_preopt.mk
@@ -385,7 +358,6 @@ endif
 
 user_variant := $(filter user userdebug,$(TARGET_BUILD_VARIANT))
 enable_target_debugging := true
-WITH_DEXPREOPT := false
 tags_to_install :=
 ifneq (,$(user_variant))
   # Target is secure in user builds.
@@ -420,7 +392,7 @@ ifeq (true,$(strip $(enable_target_debugging)))
   # Target is more debuggable and adbd is on by default
   ADDITIONAL_DEFAULT_PROPERTIES += ro.debuggable=1
   # Enable Dalvik lock contention logging.
-  #ADDITIONAL_BUILD_PROPERTIES += dalvik.vm.lockprof.threshold=500
+  ADDITIONAL_BUILD_PROPERTIES += dalvik.vm.lockprof.threshold=500
   # Include the debugging/testing OTA keys in this build.
   INCLUDE_TEST_OTA_KEYS := true
 else # !enable_target_debugging
@@ -432,7 +404,6 @@ endif # !enable_target_debugging
 
 ifeq ($(TARGET_BUILD_VARIANT),eng)
 tags_to_install := debug eng
-WITH_DEXPREOPT := false
 ifneq ($(filter ro.setupwizard.mode=ENABLED, $(call collapse-pairs, $(ADDITIONAL_BUILD_PROPERTIES))),)
   # Don't require the setup wizard on eng builds
   ADDITIONAL_BUILD_PROPERTIES := $(filter-out ro.setupwizard.mode=%,\
@@ -548,11 +519,13 @@ ifneq ($(dont_bother),true)
 subdir_makefiles := \
 	$(shell build/tools/findleaves.py $(FIND_LEAVES_EXCLUDES) $(subdirs) Android.mk)
 
+$(foreach mk, $(subdir_makefiles), $(eval include $(mk)))
+
 ifeq ($(USE_SOONG),true)
 subdir_makefiles := $(SOONG_ANDROID_MK) $(call filter-soong-makefiles,$(subdir_makefiles))
 endif
 
-$(foreach mk, $(subdir_makefiles), $(eval include $(mk)))
+$(foreach mk, $(subdir_makefiles),$(info including $(mk) ...)$(eval include $(mk)))
 
 ifdef PDK_FUSION_PLATFORM_ZIP
 # Bring in the PDK platform.zip modules.
@@ -1082,15 +1055,6 @@ target-java-tests : java-target-tests
 target-native-tests : native-target-tests
 tests : host-tests target-tests
 
-# To catch more build breakage, check build tests modules in eng and userdebug builds.
-ifneq ($(ANDROID_NO_TEST_CHECK),true)
-ifneq ($(TARGET_BUILD_PDK),true)
-ifneq ($(filter eng userdebug,$(TARGET_BUILD_VARIANT)),)
-droidcore : target-tests host-tests
-endif
-endif
-endif
-
 ifneq (,$(filter samplecode, $(MAKECMDGOALS)))
 .PHONY: samplecode
 sample_MODULES := $(sort $(call get-tagged-modules,samples))
@@ -1102,7 +1066,7 @@ $(foreach module,$(sample_MODULES),$(eval $(call \
 sample_ADDITIONAL_INSTALLED := \
         $(filter-out $(modules_to_install) $(modules_to_check) $(ALL_PREBUILT),$(sample_MODULES))
 samplecode: $(sample_APKS_COLLECTION)
-	@echo "Collect sample code apks: $^"
+	@echo -e ${CL_GRN}"Collect sample code apks:"${CL_RST}" $^"
 	# remove apks that are not intended to be installed.
 	rm -f $(sample_ADDITIONAL_INSTALLED)
 endif  # samplecode in $(MAKECMDGOALS)
@@ -1112,8 +1076,8 @@ findbugs: $(INTERNAL_FINDBUGS_HTML_TARGET) $(INTERNAL_FINDBUGS_XML_TARGET)
 
 .PHONY: clean
 clean:
-	@rm -rf $(OUT_DIR)/*
-	@echo "Entire build directory removed."
+	@rm -rf $(OUT_DIR)/* $(OUT_DIR)/..?* $(OUT_DIR)/.[!.]*
+	@echo -e ${CL_GRN}"Entire build directory removed."${CL_RST}
 
 .PHONY: clobber
 clobber: clean
@@ -1123,7 +1087,7 @@ clobber: clean
 #xxx scrape this from ALL_MODULE_NAME_TAGS
 .PHONY: modules
 modules:
-	@echo "Available sub-modules:"
+	@echo -e ${CL_GRN}"Available sub-modules:"${CL_RST}
 	@echo "$(call module-names-for-tag-list,$(ALL_MODULE_TAGS))" | \
 	      tr -s ' ' '\n' | sort -u | $(COLUMN)
 
@@ -1135,3 +1099,4 @@ showcommands:
 nothing:
 	@echo Successfully read the makefiles.
 endif # !relaunch_with_ninja
+endif

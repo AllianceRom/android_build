@@ -209,6 +209,8 @@ ifdef LOCAL_CLANG_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)
 my_clang := $(strip $(LOCAL_CLANG_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)))
 endif
 
+my_sdclang := $(strip $(LOCAL_SDCLANG))
+
 # clang is enabled by default for host builds
 # enable it unless we've specifically disabled clang above
 ifdef LOCAL_IS_HOST_MODULE
@@ -251,6 +253,14 @@ endif
 my_cppflags := $(my_cpp_std_version) $(my_cppflags)
 
 
+ifeq ($(SDCLANG),true)
+    ifeq ($(my_sdclang),)
+        ifeq ($(TARGET_USE_SDCLANG),true)
+            my_sdclang := true
+        endif
+    endif
+endif
+
 # arch-specific static libraries go first so that generic ones can depend on them
 my_static_libraries := $(LOCAL_STATIC_LIBRARIES_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)) $(LOCAL_STATIC_LIBRARIES_$(my_32_64_bit_suffix)) $(my_static_libraries)
 my_whole_static_libraries := $(LOCAL_WHOLE_STATIC_LIBRARIES_$($(my_prefix)$(LOCAL_2ND_ARCH_VAR_PREFIX)ARCH)) $(LOCAL_WHOLE_STATIC_LIBRARIES_$(my_32_64_bit_suffix)) $(my_whole_static_libraries)
@@ -261,8 +271,8 @@ include $(BUILD_SYSTEM)/cxx_stl_setup.mk
 ifdef LOCAL_HAL_STATIC_LIBRARIES
 $(foreach lib, $(LOCAL_HAL_STATIC_LIBRARIES), \
     $(eval b_lib := $(filter $(lib).%,$(BOARD_HAL_STATIC_LIBRARIES)))\
-    $(if $(b_lib), $(eval my_static_libraries += $(b_lib)),\
-                   $(eval my_static_libraries += $(lib).default)))
+    $(if $(b_lib), $(eval my_static_libraries := $(b_lib) $(my_static_libraries)),\
+                   $(eval my_static_libraries := $(lib).default $(my_static_libraries))))
 b_lib :=
 endif
 
@@ -305,6 +315,14 @@ my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CFL
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CONLYFLAGS)
 my_target_global_cppflags += $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_CPPFLAGS)
 my_target_global_ldflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_TARGET_GLOBAL_LDFLAGS)
+    ifeq ($(my_sdclang),true)
+        ifeq ($(strip $(my_cc)),)
+            my_cc := $(my_cc_wrapper) $(SDCLANG_PATH)/clang $(SDLLVM_AE_FLAG) -Wno-vectorizer-no-neon
+        endif
+        ifeq ($(strip $(my_cxx)),)
+            my_cxx := $(my_cxx_wrapper) $(SDCLANG_PATH)/clang++ $(SDLLVM_AE_FLAG) -Wno-vectorizer-no-neon
+        endif
+    endif
 else
 my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CFLAGS)
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)TARGET_GLOBAL_CONLYFLAGS)
@@ -608,55 +626,73 @@ endif
 ## Compile the .proto files to .cc (or .c) and then to .o
 ###########################################################
 proto_sources := $(filter %.proto,$(my_src_files))
+proto_generated_objects :=
+proto_generated_headers :=
 ifneq ($(proto_sources),)
-proto_gen_dir := $(generated_sources_dir)/proto
+proto_generated_sources_dir := $(generated_sources_dir)/proto
+proto_generated_obj_dir := $(intermediates)/proto
 
-my_rename_cpp_ext :=
 ifneq (,$(filter nanopb-c nanopb-c-enable_malloc, $(LOCAL_PROTOC_OPTIMIZE_TYPE)))
 my_proto_source_suffix := .c
 my_proto_c_includes := external/nanopb-c
-my_protoc_flags := --nanopb_out=$(proto_gen_dir) \
+my_protoc_flags := --nanopb_out=$(proto_generated_sources_dir) \
     --plugin=external/nanopb-c/generator/protoc-gen-nanopb
 else
-my_proto_source_suffix := $(LOCAL_CPP_EXTENSION)
-ifneq ($(my_proto_source_suffix),.cc)
-# aprotoc is hardcoded to write out only .cc file.
-# We need to rename the extension to $(LOCAL_CPP_EXTENSION) if it's not .cc.
-my_rename_cpp_ext := true
-endif
+my_proto_source_suffix := .cc
 my_proto_c_includes := external/protobuf/src
 my_cflags += -DGOOGLE_PROTOBUF_NO_RTTI
-my_protoc_flags := --cpp_out=$(proto_gen_dir)
+my_protoc_flags := --cpp_out=$(proto_generated_sources_dir)
 endif
-my_proto_c_includes += $(proto_gen_dir)
+my_proto_c_includes += $(proto_generated_sources_dir)
 
 proto_sources_fullpath := $(addprefix $(LOCAL_PATH)/, $(proto_sources))
-proto_generated_cpps := $(addprefix $(proto_gen_dir)/, \
+proto_generated_sources := $(addprefix $(proto_generated_sources_dir)/, \
     $(patsubst %.proto,%.pb$(my_proto_source_suffix),$(proto_sources_fullpath)))
+proto_generated_headers := $(patsubst %.pb$(my_proto_source_suffix),%.pb.h, $(proto_generated_sources))
+proto_generated_objects := $(addprefix $(proto_generated_obj_dir)/, \
+    $(patsubst %.proto,%.pb.o,$(proto_sources_fullpath)))
+$(call track-src-file-obj,$(proto_sources),$(proto_generated_objects))
+
+define copy-proto-files
+$(if $(PRIVATE_PROTOC_OUTPUT), \
+   $(if $(call streq,$(PRIVATE_PROTOC_INPUT),$(PRIVATE_PROTOC_OUTPUT)),, \
+   $(eval proto_generated_path := $(dir $(subst $(PRIVATE_PROTOC_INPUT),$(PRIVATE_PROTOC_OUTPUT),$@)))
+   @mkdir -p $(dir $(proto_generated_path))
+   @echo "Protobuf relocation: $@ => $(proto_generated_path)"
+   @cp -f $@ $(proto_generated_path) ),)
+endef
+
 
 # Ensure the transform-proto-to-cc rule is only defined once in multilib build.
-ifndef $(my_host)$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined
-$(proto_generated_cpps): PRIVATE_PROTO_INCLUDES := $(TOP)
-$(proto_generated_cpps): PRIVATE_PROTOC_FLAGS := $(LOCAL_PROTOC_FLAGS) $(my_protoc_flags)
-$(proto_generated_cpps): PRIVATE_RENAME_CPP_EXT := $(my_rename_cpp_ext)
-$(proto_generated_cpps): $(proto_gen_dir)/%.pb$(my_proto_source_suffix): %.proto $(my_protoc_deps) $(PROTOC)
+ifndef $(my_prefix)_$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined
+$(proto_generated_sources): PRIVATE_PROTO_INCLUDES := $(TOP)
+$(proto_generated_sources): PRIVATE_PROTOC_FLAGS := $(LOCAL_PROTOC_FLAGS) $(my_protoc_flags)
+$(proto_generated_sources): PRIVATE_PROTOC_OUTPUT := $(LOCAL_PROTOC_OUTPUT)
+$(proto_generated_sources): PRIVATE_PROTOC_INPUT := $(LOCAL_PATH)
+$(proto_generated_sources): $(proto_generated_sources_dir)/%.pb$(my_proto_source_suffix): %.proto $(PROTOC)
 	$(transform-proto-to-cc)
+	$(copy-proto-files)
 
-$(my_host)$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined := true
+# This is just a dummy rule to make sure gmake doesn't skip updating the dependents.
+$(proto_generated_headers): PRIVATE_PROTOC_OUTPUT := $(LOCAL_PROTOC_OUTPUT)
+$(proto_generated_headers): PRIVATE_PROTOC_INPUT := $(LOCAL_PATH)
+$(proto_generated_headers): $(proto_generated_sources_dir)/%.pb.h: $(proto_generated_sources_dir)/%.pb$(my_proto_source_suffix)
+	@echo "Updated header file $@."
+	$(hide) touch $@
+	$(copy-proto-files)
+
+$(my_prefix)_$(LOCAL_MODULE_CLASS)_$(LOCAL_MODULE)_proto_defined := true
+endif  # transform-proto-to-cc rule included only once
+
+$(proto_generated_objects): PRIVATE_ARM_MODE := $(normal_objects_mode)
+$(proto_generated_objects): PRIVATE_ARM_CFLAGS := $(normal_objects_cflags)
+$(proto_generated_objects): $(proto_generated_obj_dir)/%.o: $(proto_generated_sources_dir)/%$(my_proto_source_suffix) $(proto_generated_headers)
+ifeq ($(my_proto_source_suffix),.c)
+	$(transform-$(PRIVATE_HOST)c-to-o)
+else
+	$(transform-$(PRIVATE_HOST)cpp-to-o)
 endif
-# Ideally we can generate the source directly into $(intermediates).
-# But many Android.mks assume the .pb.hs are in $(generated_sources_dir).
-# As a workaround, we make a copy in the $(intermediates).
-proto_intermediate_dir := $(intermediates)/proto
-proto_intermediate_cpps := $(patsubst $(proto_gen_dir)/%,$(proto_intermediate_dir)/%,\
-    $(proto_generated_cpps))
-$(proto_intermediate_cpps) : $(proto_intermediate_dir)/% : $(proto_gen_dir)/% | $(ACP)
-	@echo "Copy: $@"
-	$(copy-file-to-target)
-	$(hide) cp $(basename $<).h $(basename $@).h
-$(call track-src-file-gen,$(proto_sources),$(proto_intermediate_cpps))
-
-my_generated_sources += $(proto_intermediate_cpps)
+$(call include-depfiles-for-objs, $(proto_generated_objects))
 
 my_c_includes += $(my_proto_c_includes)
 # Auto-export the generated proto source dir.
@@ -874,7 +910,7 @@ $(call track-src-file-obj,$(patsubst %,%.arm,$(cpp_arm_sources)),$(cpp_arm_objec
 dotdot_arm_objects :=
 $(foreach s,$(dotdot_arm_sources),\
   $(eval $(call compile-dotdot-cpp-file,$(s),\
-  $(my_additional_dependencies),\
+  $(yacc_cpps) $(proto_generated_headers) $(my_additional_dependencies),\
   dotdot_arm_objects)))
 $(call track-src-file-obj,$(patsubst %,%.arm,$(dotdot_arm_sources)),$(dotdot_arm_objects))
 
@@ -882,7 +918,7 @@ dotdot_sources := $(filter ../%$(LOCAL_CPP_EXTENSION),$(my_src_files))
 dotdot_objects :=
 $(foreach s,$(dotdot_sources),\
   $(eval $(call compile-dotdot-cpp-file,$(s),\
-    $(my_additional_dependencies),\
+    $(yacc_cpps) $(proto_generated_headers) $(my_additional_dependencies),\
     dotdot_objects)))
 $(call track-src-file-obj,$(dotdot_sources),$(dotdot_objects))
 
@@ -900,6 +936,7 @@ cpp_objects        := $(cpp_arm_objects) $(cpp_normal_objects)
 ifneq ($(strip $(cpp_objects)),)
 $(cpp_objects): $(intermediates)/%.o: \
     $(TOPDIR)$(LOCAL_PATH)/%$(LOCAL_CPP_EXTENSION) \
+    $(yacc_cpps) $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)cpp-to-o)
 $(call include-depfiles-for-objs, $(cpp_objects))
@@ -921,7 +958,8 @@ ifneq ($(strip $(gen_cpp_objects)),)
 $(gen_cpp_objects): PRIVATE_ARM_MODE := $(normal_objects_mode)
 $(gen_cpp_objects): PRIVATE_ARM_CFLAGS := $(normal_objects_cflags)
 $(gen_cpp_objects): $(intermediates)/%.o: \
-    $(intermediates)/%$(LOCAL_CPP_EXTENSION) \
+    $(intermediates)/%$(LOCAL_CPP_EXTENSION) $(yacc_cpps) \
+    $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)cpp-to-o)
 $(call include-depfiles-for-objs, $(gen_cpp_objects))
@@ -976,7 +1014,7 @@ $(call track-src-file-obj,$(patsubst %,%.arm,$(c_arm_sources)),$(c_arm_objects))
 dotdot_arm_objects :=
 $(foreach s,$(dotdot_arm_sources),\
   $(eval $(call compile-dotdot-c-file,$(s),\
-    $(my_additional_dependencies),\
+    $(yacc_cpps) $(proto_generated_headers) $(my_additional_dependencies),\
     dotdot_arm_objects)))
 $(call track-src-file-obj,$(patsubst %,%.arm,$(dotdot_arm_sources)),$(dotdot_arm_objects))
 
@@ -984,7 +1022,7 @@ dotdot_sources := $(filter ../%.c, $(my_src_files))
 dotdot_objects :=
 $(foreach s, $(dotdot_sources),\
   $(eval $(call compile-dotdot-c-file,$(s),\
-    $(my_additional_dependencies),\
+    $(yacc_cpps) $(proto_generated_headers) $(my_additional_dependencies),\
     dotdot_objects)))
 $(call track-src-file-obj,$(dotdot_sources),$(dotdot_objects))
 
@@ -1000,7 +1038,7 @@ $(dotdot_objects) $(c_normal_objects): PRIVATE_ARM_CFLAGS := $(normal_objects_cf
 c_objects        := $(c_arm_objects) $(c_normal_objects)
 
 ifneq ($(strip $(c_objects)),)
-$(c_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.c \
+$(c_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.c $(yacc_cpps) $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)c-to-o)
 $(call include-depfiles-for-objs, $(c_objects))
@@ -1021,7 +1059,7 @@ ifneq ($(strip $(gen_c_objects)),)
 # TODO: support compiling certain generated files as arm.
 $(gen_c_objects): PRIVATE_ARM_MODE := $(normal_objects_mode)
 $(gen_c_objects): PRIVATE_ARM_CFLAGS := $(normal_objects_cflags)
-$(gen_c_objects): $(intermediates)/%.o: $(intermediates)/%.c \
+$(gen_c_objects): $(intermediates)/%.o: $(intermediates)/%.c $(yacc_cpps) $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)c-to-o)
 $(call include-depfiles-for-objs, $(gen_c_objects))
@@ -1036,7 +1074,7 @@ objc_objects := $(addprefix $(intermediates)/,$(objc_sources:.m=.o))
 $(call track-src-file-obj,$(objc_sources),$(objc_objects))
 
 ifneq ($(strip $(objc_objects)),)
-$(objc_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.m \
+$(objc_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.m $(yacc_cpps) $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)m-to-o)
 $(call include-depfiles-for-objs, $(objc_objects))
@@ -1051,7 +1089,7 @@ objcpp_objects := $(addprefix $(intermediates)/,$(objcpp_sources:.mm=.o))
 $(call track-src-file-obj,$(objcpp_sources),$(objcpp_objects))
 
 ifneq ($(strip $(objcpp_objects)),)
-$(objcpp_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.mm \
+$(objcpp_objects): $(intermediates)/%.o: $(TOPDIR)$(LOCAL_PATH)/%.mm $(yacc_cpps) $(proto_generated_headers) \
     $(my_additional_dependencies)
 	$(transform-$(PRIVATE_HOST)mm-to-o)
 $(call include-depfiles-for-objs, $(objcpp_objects))
@@ -1152,7 +1190,7 @@ import_includes_deps := $(strip \
       $(call intermediates-dir-for,STATIC_LIBRARIES,$(l),$(LOCAL_IS_HOST_MODULE),,$(LOCAL_2ND_ARCH_VAR_PREFIX),$(my_host_cross))/export_includes))
 $(import_includes): PRIVATE_IMPORT_EXPORT_INCLUDES := $(import_includes_deps)
 $(import_includes) : $(LOCAL_MODULE_MAKEFILE_DEP) $(import_includes_deps)
-	@echo Import includes file: $@
+	@echo -e ${CL_CYN}Import includes file:${CL_RST} $@
 	$(hide) mkdir -p $(dir $@) && rm -f $@
 ifdef import_includes_deps
 	$(hide) for f in $(PRIVATE_IMPORT_EXPORT_INCLUDES); do \
@@ -1181,7 +1219,8 @@ normal_objects := \
     $(c_objects) \
     $(gen_c_objects) \
     $(objc_objects) \
-    $(objcpp_objects)
+    $(objcpp_objects) \
+    $(proto_generated_objects)
 
 new_order_normal_objects := $(foreach f,$(my_src_files),$(my_src_file_obj_$(f)))
 new_order_normal_objects += $(foreach f,$(my_gen_src_files),$(my_src_file_obj_$(f)))
@@ -1199,6 +1238,11 @@ endif
 normal_objects += $(addprefix $(TOPDIR)$(LOCAL_PATH)/,$(LOCAL_PREBUILT_OBJ_FILES))
 
 all_objects := $(normal_objects) $(gen_o_objects)
+
+## Allow a device's own headers to take precedence over global ones
+ifneq ($(TARGET_SPECIFIC_HEADER_PATH),)
+my_c_includes := $(TOPDIR)$(TARGET_SPECIFIC_HEADER_PATH) $(my_c_includes)
+endif
 
 # Cleanup file tracking
 $(foreach f,$(my_tracked_gen_files),$(eval my_src_file_gen_$(s):=))
@@ -1339,7 +1383,11 @@ my_ldflags := $(call $(LOCAL_2ND_ARCH_VAR_PREFIX)convert-to-$(my_host)clang-flag
 endif
 
 ifeq ($(my_fdo_build), true)
-  my_cflags := $(patsubst -Os,-O2,$(my_cflags))
+	preferred_opt_level := 2
+	ifneq ($(TARGET_OPTIMIZATION_LEVEL),)
+		preferred_opt_level := $(TARGET_OPTIMIZATION_LEVEL)
+	endif
+  my_cflags := $(patsubst -Os,-O$(preferred_opt_level),$(my_cflags))
   fdo_incompatible_flags := -fno-early-inlining -finline-limit=%
   my_cflags := $(filter-out $(fdo_incompatible_flags),$(my_cflags))
 endif
@@ -1394,10 +1442,12 @@ $(LOCAL_INSTALLED_MODULE): | $(installed_static_library_notice_file_targets)
 ###########################################################
 export_includes := $(intermediates)/export_includes
 $(export_includes): PRIVATE_EXPORT_C_INCLUDE_DIRS := $(my_export_c_include_dirs)
-# By adding $(my_generated_sources) it makes sure the headers get generated
-# before any dependent source files get compiled.
-$(export_includes) : $(my_generated_sources) $(export_include_deps)
-	@echo Export includes file: $< -- $@
+# Make sure .pb.h are already generated before any dependent source files get compiled.
+# Similarly, the generated DBus headers need to exist before we export their location.
+# People are not going to consume the aidl generated cpp file, but the cpp file is
+# generated after the headers, so this is a convenient way to ensure the headers exist.
+$(export_includes) : $(LOCAL_MODULE_MAKEFILE_DEP) $(proto_generated_headers) $(dbus_generated_headers) $(aidl_gen_cpp) $(vts_gen_cpp)
+	@echo -e ${CL_CYN}Export includes file:${CL_RST} $< -- $@
 	$(hide) mkdir -p $(dir $@) && rm -f $@.tmp
 ifdef my_export_c_include_dirs
 	$(hide) for d in $(PRIVATE_EXPORT_C_INCLUDE_DIRS); do \

@@ -28,15 +28,17 @@ PRODUCT_PACKAGES += \
     CaptivePortalLogin \
     CertInstaller \
     Contacts \
+    DeskClock \
     DocumentsUI \
     DownloadProviderUi \
-    ExactCalculator \
+    Exchange \
     ExternalStorageProvider \
     FusedLocation \
     InputDevices \
     KeyChain \
     Keyguard \
     LatinIME \
+    Launcher3 \
     ManagedProvisioning \
     MtpDocumentsProvider \
     PacProcessor \

@@ -20,7 +20,8 @@
 PRODUCT_PACKAGES := \
     Bluetooth \
     BluetoothMidiService \
-    MusicFX \
+    Camera2 \
+    Gallery2 \
     OneTimeInitializer \
     Provision \
     SystemUI \
@@ -43,10 +44,8 @@ PRODUCT_PACKAGES += \
     vibrator.default \
     power.default
 
-ifeq ($(filter marlin sailfish,$(TARGET_PRODUCT)),)
 PRODUCT_COPY_FILES := \
-        frameworks/av/media/libeffects/data/audio_effects.conf:system/etc/audio_effects.conf
-endif
+    frameworks/av/media/libeffects/data/audio_effects.conf:system/etc/audio_effects.conf
 
 PRODUCT_PROPERTY_OVERRIDES += \
     ro.carrier=unknown

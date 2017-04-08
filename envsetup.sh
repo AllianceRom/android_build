@@ -1,27 +1,66 @@
+#!/bin/bash
+
+# Source of colors: http://misc.flogisoft.com/bash/tip_colors_and_formatting
+export CL_RESET="\033[0m"
+export EF_BOLD="\033[1m"
+
+export CL_RED="\033[31m"
+export CL_GREEN="\033[32m"
+export CL_YELLOW="\033[33m"
+export CL_BLUE="\033[34m"
+export CL_MAGENTA="\033[35m"
+export CL_CYAN="\033[36m"
+export CL_LGRAY="\033[37m"
+export CL_DGRAY="\033[90m"
+export CL_LRED="\033[91m"
+export CL_LGREEN="\033[92m"
+export CL_LYELLOW="\033[93m"
+export CL_LBLUE="\033[94m"
+export CL_LMAGENTA="\033[95m"
+export CL_LCYAN="\033[96m"
+export CL_LWHITE="\033[97m"
+
+export BG_DEFAULT="\033[49m"
+export BG_RED="\033[41m"
+export BG_GREEN="\033[42m"
+export BG_BLUE="\033[44m"
+export BG_DGRAY="\033[100m"
+
+export CL_ALLIANCE="\033[38;5;39m"
+export CL_ALLIANCEBOLD="\033[38;5;39;1m"
+
+export EF_UNDERLINE="\033[4m"
+export EF_DIM="\033[2m"
+export EF_BLINK="\033[5m"
+export EF_INVERT="\033[7m"
+export EF_HIDDEN="\033[8m"
+
 function hmm() {
 cat <<EOF
 Invoke ". build/envsetup.sh" from your shell to add the following functions to your environment:
-- lunch:     lunch <product_name>-<build_variant>
-- tapas:     tapas [<App1> <App2> ...] [arm|x86|mips|armv5|arm64|x86_64|mips64] [eng|userdebug|user]
-- croot:     Changes directory to the top of the tree.
-- m:         Makes from the top of the tree.
-- mm:        Builds all of the modules in the current directory, but not their dependencies.
-- mmm:       Builds all of the modules in the supplied directories, but not their dependencies.
-             To limit the modules being built use the syntax: mmm dir/:target1,target2.
-- mma:       Builds all of the modules in the current directory, and their dependencies.
-- mmma:      Builds all of the modules in the supplied directories, and their dependencies.
-- provision: Flash device with all required partitions. Options will be passed on to fastboot.
-- cgrep:     Greps on all local C/C++ files.
-- ggrep:     Greps on all local Gradle files.
-- jgrep:     Greps on all local Java files.
-- resgrep:   Greps on all local res/*.xml files.
-- mangrep:   Greps on all local AndroidManifest.xml files.
-- mgrep:     Greps on all local Makefiles files.
-- sepgrep:   Greps on all local sepolicy files.
-- sgrep:     Greps on all local source files.
-- godir:     Go to the directory containing a file.
-- mka:       Builds using SCHED_BATCH on all processors
-- reposync:  Parallel repo sync using ionice and SCHED_BATCH
+- lunch:   lunch <product_name>-<build_variant>
+- tapas:   tapas [<App1> <App2> ...] [arm|x86|mips|armv5|arm64|x86_64|mips64] [eng|userdebug|user]
+- croot:   Changes directory to the top of the tree.
+- cout:    Changes directory to out.
+- m:       Makes from the top of the tree.
+- mm:      Builds all of the modules in the current directory, but not their dependencies.
+- mmm:     Builds all of the modules in the supplied directories, but not their dependencies.
+           To limit the modules being built use the syntax: mmm dir/:target1,target2.
+- mma:     Builds all of the modules in the current directory, and their dependencies.
+- mmp:     Builds all of the modules in the current directory and pushes them to the device.
+- mmmp:    Builds all of the modules in the supplied directories and pushes them to the device.
+- mmma:    Builds all of the modules in the supplied directories, and their dependencies.
+- cgrep:   Greps on all local C/C++ files.
+- ggrep:   Greps on all local Gradle files.
+- jgrep:   Greps on all local Java files.
+- resgrep: Greps on all local res/*.xml files.
+- mangrep: Greps on all local AndroidManifest.xml files.
+- sepgrep: Greps on all local sepolicy files.
+- sgrep:   Greps on all local source files.
+- godir:   Go to the directory containing a file.
+- pushboot:Push a file from your OUT dir to your phone and reboots it, using absolute path.
+- mka:      Builds using SCHED_BATCH on all processors
+- repopick: Utility to fetch changes from Gerrit.
 
 Environment options:
 - SANITIZE_HOST: Set to 'true' to use ASAN for all host modules. Note that
@@ -131,12 +170,14 @@ function check_product()
         return
     fi
 
-    if (echo -n $1 | grep -q -e "^aosp_") ; then
-       CUSTOM_BUILD=
+    if (echo -n $1 | grep -q -e "^ALLIANCE_") ; then
+       ALLIANCE_BUILD=$(echo -n $1 | sed -e 's/^ALLIANCE_//g')
     else
-       CUSTOM_BUILD=$1
+       ALLIANCE_BUILD=
     fi
-    export CUSTOM_BUILD
+    export ALLIANCE_BUILD
+    export ALLIANCE_VERSION=$(get_build_var ALLIANCE_VERSION)
+
 
         TARGET_PRODUCT=$1 \
         TARGET_BUILD_VARIANT= \
@@ -231,8 +272,10 @@ function setpaths()
         export ANDROID_TOOLCHAIN_2ND_ARCH=$gccprebuiltdir/$toolchaindir2
     fi
 
+    export LUNZIP_PATH=${T}/prebuilts/misc/linux-x86/lunzip
+
     export ANDROID_DEV_SCRIPTS=$T/development/scripts:$T/prebuilts/devtools/tools:$T/external/selinux/prebuilts/bin
-    export ANDROID_BUILD_PATHS=$(get_build_var ANDROID_BUILD_PATHS):$ANDROID_TOOLCHAIN:$ANDROID_TOOLCHAIN_2ND_ARCH:$ANDROID_DEV_SCRIPTS:
+    export ANDROID_BUILD_PATHS=$(get_build_var ANDROID_BUILD_PATHS):$ANDROID_TOOLCHAIN:$ANDROID_TOOLCHAIN_2ND_ARCH:$ANDROID_DEV_SCRIPTS:$LUNZIP_PATH:
 
     # If prebuilts/android-emulator/<system>/ exists, prepend it to our PATH
     # to ensure that the corresponding 'emulator' binaries are used.
@@ -292,6 +335,7 @@ function set_stuff_for_environment()
     setpaths
     set_sequence_number
 
+    export ANDROID_BUILD_TOP=$(gettop)
     # With this environment variable new GCC can apply colors to warnings/errors
     export GCC_COLORS='error=01;31:warning=01;35:note=01;36:caret=01;32:locus=01:quote=01'
     export ASAN_OPTIONS=detect_leaks=0
@@ -523,48 +567,29 @@ function add_lunch_combo()
 }
 
 # add the default one here
-#add_lunch_combo aosp_arm-eng
-#add_lunch_combo aosp_arm64-eng
-#add_lunch_combo aosp_mips-eng
-#add_lunch_combo aosp_mips64-eng
-#add_lunch_combo aosp_x86-eng
-#add_lunch_combo aosp_x86_64-eng
 
 function print_lunch_menu()
 {
     local uname=$(uname)
     echo
     echo "You're building on" $uname
-    if [ "$(uname)" = "Darwin" ] ; then
-       echo "  (ohai, iSheep!!)"
-    fi
     echo
-    if [ "z${CUSTOM_DEVICES_ONLY}" != "z" ]; then
-       echo "Breakfast menu... pick a combo:"
-       echo " "
-    else
-       echo "Lunch menu... pick a combo:"
-       echo " "
-    fi
+    echo "Lunch menu... pick a combo:"
 
     local i=1
     local choice
     for choice in ${LUNCH_MENU_CHOICES[@]}
     do
-        echo " $i. $choice "
+        echo "     $i. $choice"
         i=$(($i+1))
     done
-
-    if [ "z${CUSTOM_DEVICES_ONLY}" != "z" ]; then
-       echo " "
-       echo "... time to mka bacon!!"
-    fi
 
     echo
 }
 
 function brunch()
 {
+    show_lunch_prettyprint
     breakfast $*
     if [ $? -eq 0 ]; then
         time mka bacon
@@ -577,10 +602,11 @@ function brunch()
 
 function breakfast()
 {
+    show_lunch_prettyprint
     target=$1
-    local variant=$2
-    CUSTOM_DEVICES_ONLY="true"
+    ALLIANCE_DEVICES_ONLY="true"
     unset LUNCH_MENU_CHOICES
+    add_lunch_combo full-eng
     for f in `/bin/ls vendor/alliance/vendorsetup.sh 2> /dev/null`
         do
             echo "including $f"
@@ -597,11 +623,8 @@ function breakfast()
             # A buildtype was specified, assume a full device name
             lunch $target
         else
-            # This is probably just the model name
-            if [ -z "$variant" ]; then
-                variant="userdebug"
-            fi
-            lunch $target-$variant
+            # This is probably just the ALLIANCE model name
+            lunch ALLIANCE_$target-userdebug
         fi
     fi
     return $?
@@ -612,7 +635,7 @@ alias bib=breakfast
 function lunch()
 {
     local answer
-
+    show_lunch_prettyprint
     if [ "$1" ] ; then
         answer=$1
     else
@@ -646,6 +669,30 @@ function lunch()
 
     export TARGET_BUILD_APPS=
 
+    local product=$(echo -n $selection | sed -e "s/-.*$//")
+    check_product $product
+    if [ $? -ne 0 ]
+    then
+        # if we can't find the product, try to grab it from our github
+        T=$(gettop)
+        pushd $T > /dev/null
+        build/tools/roomservice.py $product
+        popd > /dev/null
+        check_product $product
+    else
+        T=$(gettop)
+        pushd $T > /dev/null
+        build/tools/roomservice.py $product true
+        popd > /dev/null
+    fi
+    if [ $? -ne 0 ]
+    then
+        echo
+        echo "** Don't have a product spec for: '$product'"
+        echo "** Do you have the right repo manifest?"
+        product=
+    fi
+
     local variant=$(echo -n $selection | sed -e "s/^[^\-]*-//")
     check_variant $variant
     if [ $? -ne 0 ]
@@ -657,7 +704,6 @@ function lunch()
     fi
 
     local product=$(echo -n $selection | sed -e "s/-.*$//")
-    check_product $product
     TARGET_PRODUCT=$product \
     TARGET_BUILD_VARIANT=$variant \
     build_build_var_cache
@@ -681,6 +727,8 @@ function lunch()
 
     echo
 
+    fixup_common_out_dir
+
     set_stuff_for_environment
     printconfig
     destroy_build_var_cache
@@ -697,7 +745,7 @@ function _lunch()
     COMPREPLY=( $(compgen -W "${LUNCH_MENU_CHOICES[*]}" -- ${cur}) )
     return 0
 }
-complete -F _lunch lunch
+complete -F _lunch lunch 2>/dev/null
 
 # Configures the build to build unbundled apps.
 # Run tapas with one or more app names (from LOCAL_PACKAGE_NAME)
@@ -751,6 +799,74 @@ function tapas()
     printconfig
     destroy_build_var_cache
 }
+
+function pushboot() {
+    if [ ! -f $OUT/$* ]; then
+        echo "File not found: $OUT/$*"
+        return 1
+    fi
+
+    adb root
+    sleep 1
+    adb wait-for-device
+    adb remount
+
+    adb push $OUT/$* /$*
+    adb reboot
+}
+
+# Credit for color strip sed: http://goo.gl/BoIcm
+function mmmp()
+{
+    if [[ $# < 1 || $1 == "--help" || $1 == "-h" ]]; then
+        echo "mmmp [make arguments] <path-to-project>"
+        return 1
+    fi
+
+    # Get product name from cm_<product>
+    PRODUCT=`echo $TARGET_PRODUCT | tr "_" "\n" | tail -n 1`
+
+    adb start-server # Prevent unexpected starting server message from adb get-state in the next line
+    if [ $(adb get-state) != device -a $(adb shell busybox test -e /sbin/recovery 2> /dev/null; echo $?) != 0 ] ; then
+        echo "No device is online. Waiting for one..."
+        echo "Please connect USB and/or enable USB debugging"
+        until [ $(adb get-state) = device -o $(adb shell busybox test -e /sbin/recovery 2> /dev/null; echo $?) = 0 ];do
+            sleep 1
+        done
+        echo "Device Found.."
+    fi
+
+    adb root &> /dev/null
+    sleep 0.3
+    adb wait-for-device &> /dev/null
+    sleep 0.3
+    adb remount &> /dev/null
+
+    mmm $* | tee .log
+
+    # Install: <file>
+    LOC=$(cat .log | sed -r 's/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g' | grep 'Install' | cut -d ':' -f 2)
+
+    # Copy: <file>
+    LOC=$LOC $(cat .log | sed -r 's/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[m|K]//g' | grep 'Copy' | cut -d ':' -f 2)
+
+    for FILE in $LOC; do
+        # Get target file name (i.e. system/bin/adb)
+        TARGET=$(echo $FILE | sed "s/\/$PRODUCT\//\n/" | tail -n 1)
+
+        # Don't send files that are not in /system.
+        if ! echo $TARGET | egrep '^system\/' > /dev/null ; then
+            continue
+        else
+            echo "Pushing: $TARGET"
+            adb push $FILE $TARGET
+        fi
+    done
+    rm -f .log
+    return 0
+}
+
+alias mmp='mmmp .'
 
 function gettop
 {
@@ -982,6 +1098,15 @@ function croot()
         \cd $(gettop)
     else
         echo "Couldn't locate the top of the tree.  Try setting TOP."
+    fi
+}
+
+function cout()
+{
+    if [  "$OUT" ]; then
+        cd $OUT
+    else
+        echo "Couldn't locate out directory.  Try setting OUT."
     fi
 }
 
@@ -1554,29 +1679,50 @@ function godir () {
     \cd $T/$pathname
 }
 
+# Make using all available CPUs
 function mka() {
     case `uname -s` in
         Darwin)
             make -j `sysctl hw.ncpu|cut -d" " -f2` "$@"
             ;;
         *)
-            mk_timer schedtool -B -n 1 -e ionice -n 1 make -j$(cat /proc/cpuinfo | grep "^processor" | wc -l) "$@"
+            schedtool -B -n 1 -e ionice -n 1 make -j `cat /proc/cpuinfo | grep "^processor" | wc -l` "$@"
             ;;
     esac
 }
 
-function reposync() {
-    case `uname -s` in
-        Darwin)
-            repo sync -j 4 "$@"
-            ;;
-        *)
-            schedtool -B -n 1 -e ionice -n 1 `which repo` sync -j 4 "$@"
-            ;;
-    esac
+function fixup_common_out_dir() {
+    common_out_dir=$(get_build_var OUT_DIR)/target/common
+    target_device=$(get_build_var TARGET_DEVICE)
+    if [ ! -z $ANDROID_FIXUP_COMMON_OUT ]; then
+        if [ -d ${common_out_dir} ] && [ ! -L ${common_out_dir} ]; then
+            mv ${common_out_dir} ${common_out_dir}-${target_device}
+            ln -s ${common_out_dir}-${target_device} ${common_out_dir}
+        else
+            [ -L ${common_out_dir} ] && rm ${common_out_dir}
+            mkdir -p ${common_out_dir}-${target_device}
+            ln -s ${common_out_dir}-${target_device} ${common_out_dir}
+        fi
+    else
+        [ -L ${common_out_dir} ] && rm ${common_out_dir}
+        mkdir -p ${common_out_dir}
+    fi
 }
 
-# Force JAVA_HOME to point to java 1.7/1.8 if it isn't already set.
+function repodiff() {
+    if [ -z "$*" ]; then
+        echo "Usage: repodiff <ref-from> [[ref-to] [--numstat]]"
+        return
+    fi
+    diffopts=$* repo forall -c \
+      'echo "$REPO_PATH ($REPO_REMOTE)"; git diff ${diffopts} 2>/dev/null ;'
+}
+
+# Force JAVA_HOME to point to java 1.7 or java 1.6  if it isn't already set.
+#
+# Note that the MacOS path for java 1.7 includes a minor revision number (sigh).
+# For some reason, installing the JDK doesn't make it show up in the
+# JavaVM.framework/Versions/1.7/ folder.
 function set_java_home() {
     # Clear the existing JAVA_HOME value if we set it ourselves, so that
     # we can reset it later, depending on the version of java the build
@@ -1616,6 +1762,13 @@ function set_java_home() {
     fi
 }
 
+function repopick() {
+    set_stuff_for_environment
+    T=$(gettop)
+    $T/build/tools/repopick.py $@
+}
+
+
 # Print colored exit condition
 function pez {
     "$@"
@@ -1634,10 +1787,12 @@ function get_make_command()
   echo command make
 }
 
-function mk_timer()
+function make()
 {
+    # Make sure that jack is working
+    JACK > /dev/null
     local start_time=$(date +"%s")
-    $@
+    $(get_make_command) "$@"
     local ret=$?
     local end_time=$(date +"%s")
     local tdiff=$(($end_time-$start_time))
@@ -1669,12 +1824,8 @@ function mk_timer()
     fi
     echo " ####${color_reset}"
     echo
+    prebuilts/sdk/tools/jack-admin stop-server 2>&1 >/dev/null
     return $ret
-}
-
-function make()
-{
-    mk_timer $(get_make_command) "$@"
 }
 
 function provision()
@@ -1706,6 +1857,11 @@ function provision()
     "$ANDROID_PRODUCT_OUT/provision-device" "$@"
 }
 
+function addalliancetools() {
+    echo -e "$EF_BOLD""Including ""$CL_ALLIANCE""ALLIANCE Tools""$CL_RESET"
+    source $(gettop)/build/tools/alliancetools.sh
+}
+
 if [ "x$SHELL" != "x/bin/bash" ]; then
     case `ps -o command -p $$` in
         *bash*)
@@ -1726,6 +1882,13 @@ do
 done
 unset f
 
-addcompletions
+function show_lunch_prettyprint() {
+  echo -e "$CL_RED" '      ╥╥╥      ╥╥     ╥╥╥    ╥╥╥      ╥╥╥╥      ╥╥╥╥╥╥╓         ╓╓╥╥ ╥╥╥╥╥╥╥╥' "$CL_RESET"
+  echo -e "$CL_RED" '      └╫╫╫╦    ╫╫╫    ╫╫╫    ╫╫╫    ╓╫╫╫╫╫╫     ╫╫╫╩╨╨╫╫╫╦ ╓╦╫╫╩╨╨╙╙ ╫╫╫╩╙╙╙╙' "$CL_RESET"
+  echo -e "$CL_RED" '  ╓╦╦╦╛ ╫╫╫╦   ╫╫╫    ╫╫╫    ╫╫╫   ╔╫╫╩  ╫╫╫╥   ╫╫╫╕   ╫╫╫ ╫╫╫╡      ╫╫╫╫╦╦╦╦' "$CL_RESET"
+  echo -e "$CL_RED" ' ╔╫╫╫    ║╫╫╫╥ ╫╫╫╥╓╓ ╫╫╫╓╓╓ ╫╫╫  ╬╫╫╫    ╫╫╫╦  ╫╫╫╕   ╫╫╫ ╙╫╫╫╦╥╥╓╓ ╫╫╫╕    ' "$CL_RESET"
+  echo -e "$CL_RED" '╝╩╩╩╩╩╩╩╩╩╩╩╩╩ ╩╩╩╩╩╩ ╩╩╩╩╩╩ ╩╩╩ ╩╩╩╩╩╩╩╩╩╩╩╩╩╩ ╩╩╩╛   ╩╩╩    ╙╙╨╩╩╩ ╩╩╩╩╩╩╩╩' "$CL_RESET"
 
-export ANDROID_BUILD_TOP=$(gettop)
+}
+
+addcompletions

@@ -25,7 +25,6 @@ PRODUCT_PACKAGES += \
     android.policy \
     android.test.runner \
     app_process \
-    applypatch \
     audioserver \
     blkid \
     bmgr \
@@ -108,6 +107,7 @@ PRODUCT_PACKAGES += \
     mtpd \
     ndc \
     netd \
+    oms \
     ping \
     ping6 \
     platform.xml \

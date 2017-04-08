@@ -1,6 +1,10 @@
-NINJA ?= $(shell command -v ninja)
+NINJA := $(shell command -v ninja)
 ifeq ($(NINJA),)
-  NINJA := prebuilts/ninja/$(HOST_PREBUILT_TAG)/ninja
+ifeq ($(filter address,$(SANITIZE_HOST)),)
+NINJA := prebuilts/build-tools/$(HOST_PREBUILT_TAG)/bin/ninja
+else
+NINJA := prebuilts/build-tools/$(HOST_PREBUILT_TAG)/asan/bin/ninja
+endif
 endif
 
 $(info Using '$(NINJA)' binary on '$(HOST_PREBUILT_TAG)')
@@ -132,6 +136,14 @@ NINJA_REMOTE_NUM_JOBS ?= 500
 NINJA_ARGS += -j$(NINJA_REMOTE_NUM_JOBS)
 else
 NINJA_MAKEPARALLEL := $(MAKEPARALLEL) --ninja
+
+# We never want Kati to see MAKEFLAGS, as forcefully overriding variables is
+# terrible. The variables in MAKEFLAGS are still available in the environment,
+# so if part of the build wants input from the user, it should be explicitly
+# checking for an environment variable or using ?=
+#
+# makeparallel already clears MAKEFLAGS, so it's not necessary in the GOMA case
+KATI_MAKEPARALLEL := MAKEFLAGS=
 endif
 
 ifeq ($(USE_SOONG),true)
@@ -151,7 +163,7 @@ $(sort $(DEFAULT_GOAL) $(ANDROID_GOALS)) : ninja_wrapper
 .PHONY: ninja_wrapper
 ninja_wrapper: $(COMBINED_BUILD_NINJA) $(MAKEPARALLEL)
 	@echo Starting build with ninja
-	+$(hide) export NINJA_STATUS="$(NINJA_STATUS)" && source $(KATI_ENV_SH) && $(NINJA_MAKEPARALLEL) $(NINJA) $(NINJA_GOALS) -C $(TOP) -f $(COMBINED_BUILD_NINJA) $(NINJA_ARGS)
+	+$(hide) export NINJA_STATUS="$(NINJA_STATUS)" && source $(KATI_ENV_SH) && exec $(NINJA_MAKEPARALLEL) $(NINJA) -d keepdepfile $(NINJA_GOALS) -C $(TOP) -f $(COMBINED_BUILD_NINJA) $(NINJA_ARGS)
 
 # Dummy Android.mk and CleanSpec.mk files so that kati won't recurse into the
 # out directory
@@ -166,7 +178,7 @@ ifeq ($(KATI_EMULATE_FIND),false)
 endif
 $(KATI_BUILD_NINJA): $(KATI) $(MAKEPARALLEL) $(DUMMY_OUT_MKS) $(SOONG_ANDROID_MK) FORCE
 	@echo Running kati to generate build$(KATI_NINJA_SUFFIX).ninja...
-	+$(hide) $(KATI_MAKEPARALLEL) $(KATI) --ninja --ninja_dir=$(OUT_DIR) --ninja_suffix=$(KATI_NINJA_SUFFIX) --regen --ignore_dirty=$(OUT_DIR)/% --no_ignore_dirty=$(SOONG_ANDROID_MK) --ignore_optional_include=$(OUT_DIR)/%.P --detect_android_echo $(KATI_FIND_EMULATOR) -f build/core/main.mk $(KATI_GOALS) --gen_all_targets BUILDING_WITH_NINJA=true SOONG_ANDROID_MK=$(SOONG_ANDROID_MK)
+	+$(hide) $(KATI_MAKEPARALLEL) $(KATI) --ninja --ninja_dir=$(OUT_DIR) --ninja_suffix=$(KATI_NINJA_SUFFIX) --regen --ignore_dirty=$(OUT_DIR)/% --no_ignore_dirty=$(SOONG_ANDROID_MK) --ignore_optional_include=$(OUT_DIR)/%.P $(KATI_FIND_EMULATOR) -f build/core/main.mk $(KATI_GOALS) --gen_all_targets BUILDING_WITH_NINJA=true SOONG_ANDROID_MK=$(SOONG_ANDROID_MK)
 
 ifneq ($(USE_SOONG_FOR_KATI),true)
 KATI_CXX := $(CLANG_CXX) $(CLANG_HOST_GLOBAL_CFLAGS) $(CLANG_HOST_GLOBAL_CPPFLAGS)

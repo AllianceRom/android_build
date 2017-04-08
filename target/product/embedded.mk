@@ -55,6 +55,7 @@ PRODUCT_PACKAGES += \
     libpixelflinger \
     libpower \
     libsigchain \
+    libsigchain_dummy \
     libstdc++ \
     libsurfaceflinger \
     libsurfaceflinger_ddmconnection \

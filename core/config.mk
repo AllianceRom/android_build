@@ -50,7 +50,6 @@ SRC_HEADERS := \
 	$(TOPDIR)system/media/audio/include \
 	$(TOPDIR)hardware/libhardware/include \
 	$(TOPDIR)hardware/libhardware_legacy/include \
-	$(TOPDIR)hardware/ril/include \
 	$(TOPDIR)libnativehelper/include \
 	$(TOPDIR)frameworks/native/include \
 	$(TOPDIR)frameworks/native/opengl/include \
@@ -165,7 +164,7 @@ include $(BUILD_SYSTEM)/envsetup.mk
 
 # Pruned directory options used when using findleaves.py
 # See envsetup.mk for a description of SCAN_EXCLUDE_DIRS
-FIND_LEAVES_EXCLUDES := $(addprefix --prune=, $(OUT_DIR) $(SCAN_EXCLUDE_DIRS) .repo .git)
+FIND_LEAVES_EXCLUDES := $(addprefix --prune=, $(SCAN_EXCLUDE_DIRS) .repo .git)
 
 # The build system exposes several variables for where to find the kernel
 # headers:
@@ -455,7 +454,6 @@ BUILD_PLATFORM_ZIP := $(filter platform platform-java,$(MAKECMDGOALS))
 # Tools that are prebuilts for TARGET_BUILD_APPS
 #
 
-ACP := $(HOST_OUT_EXECUTABLES)/acp
 AIDL := $(HOST_OUT_EXECUTABLES)/aidl
 AAPT := $(HOST_OUT_EXECUTABLES)/aapt
 AAPT2 := $(HOST_OUT_EXECUTABLES)/aapt2
@@ -468,14 +466,23 @@ BCC_COMPAT := $(HOST_OUT_EXECUTABLES)/bcc_compat
 DX := $(HOST_OUT_EXECUTABLES)/dx
 MAINDEXCLASSES := $(HOST_OUT_EXECUTABLES)/mainDexClasses
 
+# Always use prebuilts for ckati and makeparallel
+prebuilt_build_tools := prebuilts/build-tools
+ifeq ($(filter address,$(SANITIZE_HOST)),)
+prebuilt_build_tools_bin := $(prebuilt_build_tools)/$(HOST_PREBUILT_TAG)/bin
+else
+prebuilt_build_tools_bin := $(prebuilt_build_tools)/$(HOST_PREBUILT_TAG)/asan/bin
+endif
+ACP := $(prebuilt_build_tools_bin)/acp
+CKATI := $(prebuilt_build_tools_bin)/ckati
+IJAR := $(prebuilt_build_tools_bin)/ijar
+MAKEPARALLEL := $(prebuilt_build_tools_bin)/makeparallel
+ZIPTIME := $(prebuilt_build_tools_bin)/ziptime
+
 USE_PREBUILT_SDK_TOOLS_IN_PLACE := true
 
 # Override the definitions above for unbundled and PDK builds
 ifneq (,$(TARGET_BUILD_APPS)$(filter true,$(TARGET_BUILD_PDK)))
-prebuilt_sdk_tools := prebuilts/sdk/tools
-prebuilt_sdk_tools_bin := $(prebuilt_sdk_tools)/$(HOST_OS)/bin
-
-ACP := $(prebuilt_sdk_tools_bin)/acp
 AIDL := $(prebuilt_sdk_tools_bin)/aidl
 AAPT := $(prebuilt_sdk_tools_bin)/aapt
 AAPT2 := $(prebuilt_sdk_tools_bin)/aapt2
@@ -529,6 +536,7 @@ else
 MKBOOTIMG := $(BOARD_CUSTOM_MKBOOTIMG)
 endif
 APICHECK := $(HOST_OUT_EXECUTABLES)/apicheck$(HOST_EXECUTABLE_SUFFIX)
+MKIMAGE :=  $(HOST_OUT_EXECUTABLES)/mkimage$(HOST_EXECUTABLE_SUFFIX)
 FS_GET_STATS := $(HOST_OUT_EXECUTABLES)/fs_get_stats$(HOST_EXECUTABLE_SUFFIX)
 MAKE_EXT4FS := $(HOST_OUT_EXECUTABLES)/make_ext4fs$(HOST_EXECUTABLE_SUFFIX)
 BLK_ALLOC_TO_BASE_FS := $(HOST_OUT_EXECUTABLES)/blk_alloc_to_base_fs$(HOST_EXECUTABLE_SUFFIX)
@@ -570,13 +578,6 @@ FUTILITY := prebuilts/misc/$(BUILD_OS)-$(HOST_PREBUILT_ARCH)/futility/futility
 VBOOT_SIGNER := prebuilts/misc/scripts/vboot_signer/vboot_signer.sh
 FEC := $(HOST_OUT_EXECUTABLES)/fec
 
-ifndef TARGET_BUILD_APPS
-ZIPTIME := $(HOST_OUT_EXECUTABLES)/ziptime$(HOST_EXECUTABLE_SUFFIX)
-endif
-
-# ijar converts a .jar file to a smaller .jar file which only has its
-# interfaces.
-IJAR := $(HOST_OUT_EXECUTABLES)/ijar$(BUILD_EXECUTABLE_SUFFIX)
 DEXDUMP := $(HOST_OUT_EXECUTABLES)/dexdump2$(BUILD_EXECUTABLE_SUFFIX)
 
 # relocation packer
@@ -615,6 +616,18 @@ else
 MD5SUM:=md5sum
 endif
 
+# In-place sed is done different in linux than OS X
+ifeq ($(HOST_OS),darwin)
+GSED:=$(shell which gsed)
+ifeq ($(GSED),)
+SED_INPLACE:=sed -i ''
+else
+SED_INPLACE:=gsed -i
+endif
+else
+SED_INPLACE:=sed -i
+endif
+
 APICHECK_CLASSPATH := $(HOST_JDK_TOOLS_JAR)
 APICHECK_CLASSPATH := $(APICHECK_CLASSPATH):$(HOST_OUT_JAVA_LIBRARIES)/doclava$(COMMON_JAVA_PACKAGE_SUFFIX)
 APICHECK_CLASSPATH := $(APICHECK_CLASSPATH):$(HOST_OUT_JAVA_LIBRARIES)/jsilver$(COMMON_JAVA_PACKAGE_SUFFIX)
@@ -627,10 +640,14 @@ else
   DEFAULT_SYSTEM_DEV_CERTIFICATE := build/target/product/security/testkey
 endif
 
+# Rules for QCOM targets
+include $(BUILD_SYSTEM)/qcom_target.mk
+
 # ###############################################################
 # Set up final options.
 # ###############################################################
 
+ifneq ($(TARGET_DEFINITELY_NEEDS_GLOBAL_FLAGS),true)
 ifneq ($(COMMON_GLOBAL_CFLAGS)$(COMMON_GLOBAL_CPPFLAGS),)
 $(warning COMMON_GLOBAL_C(PP)FLAGS changed)
 $(info *** Device configurations are no longer allowed to change the global flags.)
@@ -638,10 +655,11 @@ $(info *** COMMON_GLOBAL_CFLAGS: $(COMMON_GLOBAL_CFLAGS))
 $(info *** COMMON_GLOBAL_CPPFLAGS: $(COMMON_GLOBAL_CPPFLAGS))
 $(error bailing...)
 endif
+endif
 
 # These can be changed to modify both host and device modules.
-COMMON_GLOBAL_CFLAGS:= -DANDROID -fmessage-length=0 -W -Wall -Wno-unused -Winit-self -Wpointer-arith
-COMMON_RELEASE_CFLAGS:= -DNDEBUG -UDEBUG
+COMMON_GLOBAL_CFLAGS += -DANDROID -fmessage-length=0 -W -Wall -Wno-unused -Winit-self -Wpointer-arith
+COMMON_RELEASE_CFLAGS += -DNDEBUG -UDEBUG
 
 # Force gcc to always output color diagnostics.  Ninja will strip the ANSI
 # color codes if it is not running in a terminal.
@@ -649,8 +667,8 @@ ifdef BUILDING_WITH_NINJA
 COMMON_GLOBAL_CFLAGS += -fdiagnostics-color
 endif
 
-COMMON_GLOBAL_CPPFLAGS:= -Wsign-promo
-COMMON_RELEASE_CPPFLAGS:=
+COMMON_GLOBAL_CPPFLAGS += -Wsign-promo
+COMMON_RELEASE_CPPFLAGS +=
 
 GLOBAL_CFLAGS_NO_OVERRIDE := \
     -Werror=int-to-pointer-cast \
@@ -708,7 +726,8 @@ HOST_GLOBAL_LD_DIRS += -L$(HOST_OUT_INTERMEDIATE_LIBRARIES)
 TARGET_GLOBAL_LD_DIRS += -L$(TARGET_OUT_INTERMEDIATE_LIBRARIES)
 
 HOST_PROJECT_INCLUDES:= $(SRC_HEADERS) $(SRC_HOST_HEADERS) $(HOST_OUT_HEADERS)
-TARGET_PROJECT_INCLUDES:= $(SRC_HEADERS) $(TARGET_OUT_HEADERS) \
+TARGET_PROJECT_INCLUDES:= $(SRC_HEADERS) $(TOPDIR)$(call project-path-for,ril)/include \
+		$(TARGET_OUT_HEADERS) \
 		$(TARGET_DEVICE_KERNEL_HEADERS) $(TARGET_BOARD_KERNEL_HEADERS) \
 		$(TARGET_PRODUCT_KERNEL_HEADERS)
 
@@ -867,10 +886,13 @@ endif
 RSCOMPAT_32BIT_ONLY_API_LEVELS := 8 9 10 11 12 13 14 15 16 17 18 19 20
 RSCOMPAT_NO_USAGEIO_API_LEVELS := 8 9 10 11 12 13
 
-ifneq ($(CUSTOM_BUILD),)
-## We need to be sure the global selinux policies are included
-## last, to avoid accidental resetting by device configs
-$(eval include vendor/alliance/sepolicy/sepolicy.mk)
+ALL_FOUND_CFLAGS := $(GLOBAL_CFLAGS) $(GLOBAL_CPPFLAGS) $(COMMON_GLOBAL_CFLAGS) $(COMMON_GLOBAL_CPPFLAGS) $(BOARD_GLOBAL_CFLAGS)
+
+ifneq (strip $(ALL_FOUND_CFLAGS),)
+	ifeq ($(findstring COMPAT_SENSORS_M,$(ALL_FOUND_CFLAGS)),COMPAT_SENSORS_M)
+		USE_COMPAT_SENSORS_M := true
+	endif
 endif
 
+# Dump some stuff on lunch and other commands
 include $(BUILD_SYSTEM)/dumpvar.mk

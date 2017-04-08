@@ -81,8 +81,10 @@ KERNEL_HEADERS_COMMON += $(libc_root)/kernel/common
 KERNEL_HEADERS_ARCH   := $(libc_root)/kernel/uapi/asm-x86 # x86 covers both x86 and x86_64.
 KERNEL_HEADERS := $(KERNEL_HEADERS_COMMON) $(KERNEL_HEADERS_ARCH)
 
+TARGET_OPTIMIZATION_LEVEL ?= 2
+
 TARGET_GLOBAL_CFLAGS += \
-			-O2 \
+			-O$(TARGET_OPTIMIZATION_LEVEL) \
 			-Wa,--noexecstack \
 			-Werror=format-security \
 			-D_FORTIFY_SOURCE=2 \
@@ -138,7 +140,6 @@ TARGET_GLOBAL_LDFLAGS += -Wl,--warn-shared-textrel
 TARGET_GLOBAL_LDFLAGS += -Wl,--fatal-warnings
 TARGET_GLOBAL_LDFLAGS += -Wl,--gc-sections
 TARGET_GLOBAL_LDFLAGS += -Wl,--hash-style=gnu
-TARGET_GLOBAL_LDFLAGS += -Wl,--no-undefined-version
 
 TARGET_C_INCLUDES := \
 	$(libc_root)/arch-x86_64/include \

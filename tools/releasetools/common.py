@@ -46,7 +46,7 @@ class Options(object):
     self.signapk_shared_library_path = "lib64"   # Relative to search_path
     self.extra_signapk_args = []
     self.java_path = "java"  # Use the one on the path by default.
-    self.java_args = "-Xmx2048m" # JVM Args
+    self.java_args = ["-Xmx2048m"]  # The default JVM args.
     self.public_key_suffix = ".x509.pem"
     self.private_key_suffix = ".pk8"
     # use otatools built boot_signer by default
@@ -461,6 +461,11 @@ def _BuildBootableImage(sourcedir, fs_config_file, info_dict=None,
     cmd.append("--base")
     cmd.append(open(fn).read().rstrip("\n"))
 
+  fn = os.path.join(sourcedir, "dt")
+  if os.access(fn, os.F_OK):
+    cmd.append("--dt")
+    cmd.append(fn)
+
   fn = os.path.join(sourcedir, "pagesize")
   if os.access(fn, os.F_OK):
     cmd.append("--pagesize")
@@ -582,6 +587,7 @@ def UnzipTemp(filename, pattern=None):
   OPTIONS.tempfiles.append(tmp)
 
   def unzip_to_dir(filename, dirname):
+    subprocess.call(["rm", "-rf", dirname + filename, "targetfiles-*"])
     cmd = ["unzip", "-o", "-q", filename, "-d", dirname]
     if pattern is not None:
       cmd.append(pattern)
@@ -710,11 +716,10 @@ def SignFile(input_name, output_name, key, password, min_api_level=None,
   java_library_path = os.path.join(
       OPTIONS.search_path, OPTIONS.signapk_shared_library_path)
 
-  cmd = [OPTIONS.java_path, OPTIONS.java_args,
-         "-Djava.library.path=" + java_library_path,
-         "-jar",
-         os.path.join(OPTIONS.search_path, OPTIONS.signapk_path)]
-  cmd.extend(OPTIONS.extra_signapk_args)
+  cmd = ([OPTIONS.java_path] + OPTIONS.java_args +
+         ["-Djava.library.path=" + java_library_path,
+          "-jar", os.path.join(OPTIONS.search_path, OPTIONS.signapk_path)] +
+         OPTIONS.extra_signapk_args)
   if whole_file:
     cmd.append("-w")
 
@@ -870,7 +875,7 @@ def ParseOptions(argv,
     elif o in ("--java_path",):
       OPTIONS.java_path = a
     elif o in ("--java_args",):
-      OPTIONS.java_args = a
+      OPTIONS.java_args = shlex.split(a)
     elif o in ("--public_key_suffix",):
       OPTIONS.public_key_suffix = a
     elif o in ("--private_key_suffix",):
@@ -1270,7 +1275,7 @@ class Difference(object):
           err.append(e)
       th = threading.Thread(target=run)
       th.start()
-      th.join(timeout=300)   # 5 mins
+      th.join(timeout=600)   # 10 mins
       if th.is_alive():
         print "WARNING: diff command timed out"
         p.terminate()
@@ -1387,15 +1392,17 @@ class BlockDifference(object):
 
   def WriteScript(self, script, output_zip, progress=None):
     if not self.src:
+      if os.getenv('TARGET_WANTS_VOLTE', 'false') == 'true':
+        print "VoLTE support activated."
+        script.Print("YOU NOT GONNA GET VoLTE, CHUTIYA")
       # write the output unconditionally
       script.Print(" ")
-      script.Print("Flashing System..")
-    else:
-      script.Print("Patching %s image after verification." % (self.partition,))
-
+      script.Print("Flashing AllianceROM system files...")
     if progress:
       script.ShowProgress(progress, 0)
     self._WriteUpdate(script, output_zip)
+    if OPTIONS.verify:
+      self._WritePostInstallVerifyScript(script)
 
   def WriteStrictVerifyScript(self, script):
     """Verify all the blocks in the care_map, including clobbered blocks.
@@ -1515,11 +1522,7 @@ class BlockDifference(object):
                          self.device, ranges_str,
                          self._HashZeroBlocks(self.tgt.extended.size())))
       script.Print(" ")
-      script.Print("Verified..")
-      if partition == "system":
-        code = ErrorCode.SYSTEM_NONZERO_CONTENTS
-      else:
-        code = ErrorCode.VENDOR_NONZERO_CONTENTS
+      script.Print("Verified AllianceROM system files...")
       script.AppendExtra(
           'else\n'
           '  abort("E%d: %s partition has unexpected non-zero contents after '
@@ -1527,7 +1530,7 @@ class BlockDifference(object):
           'endif;' % (code, partition))
     else:
       script.Print(" ")
-      script.Print("Verified..")
+      script.Print("Verified AllianceROM system files...")
 
     if partition == "system":
       code = ErrorCode.SYSTEM_UNEXPECTED_CONTENTS
@@ -1559,7 +1562,8 @@ class BlockDifference(object):
 
     call = ('block_image_update("{device}", '
             'package_extract_file("{partition}.transfer.list"), '
-            '"{partition}.new.dat", "{partition}.patch.dat");'.format(
+            '"{partition}.new.dat", "{partition}.patch.dat") ||\n'
+            '  abort("E{code}: Failed to update {partition} image.");'.format(
                 device=self.device, partition=self.partition, code=code))
     script.AppendExtra(script.WordWrap(call))
 
