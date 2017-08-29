@@ -26,10 +26,12 @@ Usage:  img_from_target_files [flags] input_target_files output_image_zip
 
 """
 
+from __future__ import print_function
+
 import sys
 
 if sys.hexversion < 0x02070000:
-  print >> sys.stderr, "Python 2.7 or newer is required."
+  print("Python 2.7 or newer is required.", file=sys.stderr)
   sys.exit(1)
 
 import os
@@ -86,6 +88,8 @@ def main(argv):
             continue
           if not image.endswith(".img"):
             continue
+          if image == "recovery-two-step.img":
+            continue
           common.ZipWrite(
               output_zip, os.path.join(images_path, image), image)
         done = True
@@ -109,7 +113,7 @@ def main(argv):
           recovery_image.AddToZip(output_zip)
 
       def banner(s):
-        print "\n\n++++ " + s + " ++++\n\n"
+        print("\n\n++++ " + s + " ++++\n\n")
 
       if not bootable_only:
         banner("AddSystem")
@@ -126,11 +130,11 @@ def main(argv):
         add_img_to_target_files.AddCache(output_zip, prefix="")
 
   finally:
-    print "cleaning up..."
+    print("cleaning up...")
     common.ZipClose(output_zip)
     shutil.rmtree(OPTIONS.input_tmp)
 
-  print "done."
+  print("done.")
 
 
 if __name__ == '__main__':
@@ -138,7 +142,5 @@ if __name__ == '__main__':
     common.CloseInheritedPipes()
     main(sys.argv[1:])
   except common.ExternalError as e:
-    print
-    print "   ERROR: %s" % (e,)
-    print
+    print("\n   ERROR: %s\n" % (e,))
     sys.exit(1)
